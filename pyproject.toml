@@ -1,0 +1,20 @@
+[project]
+name = "key-disribution"
+version = "0.1.0"
+description = "Interactive KDC key distribution and two-way chat with manual AES-128"
+readme = "README.md"
+authors = [
+    { name = "hamzahjmbg14", email = "hamzahjmbg14@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+key-disribution = "key_disribution:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = ["key_disribution", "pkg"]
