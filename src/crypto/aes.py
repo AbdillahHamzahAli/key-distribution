@@ -1,7 +1,4 @@
-try:
-    from .tables import INV_SBOX, RCON, S_BOX, _gmul
-except ImportError:
-    from tables import INV_SBOX, RCON, S_BOX, _gmul
+from .tables import INV_SBOX, RCON, S_BOX, _gmul
 
 
 def _require_block(block):
