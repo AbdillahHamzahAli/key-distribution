@@ -8,7 +8,7 @@ NONCE_LENGTH = 8
 NONCE_ALPHABET = "0123456789"
 
 
-def _new_nonce():
+def new_nonce():
     first = secrets.choice("123456789")
     rest = "".join(secrets.choice(NONCE_ALPHABET) for _ in range(NONCE_LENGTH - 1))
     return first + rest
@@ -51,7 +51,7 @@ def parse_ticket(kb, hex_ticket):
 
 
 def make_step4(ks):
-    n2 = _new_nonce()
+    n2 = new_nonce()
     return n2, encrypt_text(ks, n2)
 
 
