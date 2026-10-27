@@ -2,6 +2,7 @@ import socket
 import threading
 import time
 
+#Removed unused lib
 from ..crypto.codec import AsciiError, KeyLengthError, key_to_bytes
 from ..net.framing import recv_line, send_line
 from ..protocol.kdc_logic import handle_step1
@@ -21,6 +22,7 @@ def _accept_loop(listener, keys):
         except OSError:
             print("[KDC] listener closed", flush=True)
             return
+        conn.settimeout(5)
         try:
             line = recv_line(conn)
             step, fields = parse_line(line)
@@ -49,7 +51,12 @@ def _menu_loop(keys, listener):
     while True:
         try:
             cmd = input("kdc> ").strip()
-        except (EOFError, KeyboardInterrupt):
+        #Split the KeyboardInterrupt and EOFError
+        except KeyboardInterrupt:
+            print("\n[KDC] Shutting down", flush=True)
+            listener.close()
+            return 
+        except EOFError:
             time.sleep(EOF_IDLE)
             continue
         if not cmd:
@@ -89,7 +96,12 @@ def main():
     print("=" * 60)
     ida = prompt_id("Alice ID")
     ka = prompt_key(f"Ka (key for {ida})")
-    idb = prompt_id("Bob ID")
+    #Added while loop to make sure that ida!=idb
+    while True:
+        idb = prompt_id("Bob ID")
+        if idb != ida:
+            break
+        print("-> Bob's ID must differ from Alice's")
     kb = prompt_key(f"Kb (key for {idb})")
     port = prompt_port("Listen port", default=9001)
     keys = {ida: ka, idb: kb}

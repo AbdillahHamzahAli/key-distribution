@@ -1,6 +1,5 @@
 import socket
 
-from ..crypto.modes import encrypt_text
 from .chat import ChatContext, chat_loop
 from ..net.framing import recv_line, send_line
 from ..protocol.handshake import make_step4, make_step5, new_nonce, parse_step2, parse_ticket, verify_step5
@@ -70,11 +69,14 @@ def _alice_handshake(state, ida, idb, kdc_host, kdc_port, bob_host, bob_port):
             pass
         raise
     print("[A] handshake complete", flush=True)
+    sock_bob.settimeout(None)
     return sock_bob, ks
 
 
 def _bob_handshake(listener, kb):
     conn, addr = listener.accept()
+    #Added a timeout 
+    conn.settimeout(10)
     print(f"[B] connection from {addr[0]}:{addr[1]}", flush=True)
     try:
         try:
@@ -101,6 +103,7 @@ def _bob_handshake(listener, kb):
         if not verify_step5(ks, n2, hex_step5):
             raise MessageError("STEP5 verification failed: f(N2) mismatch")
         print(f"[B] STEP5 verified with {ida!r} -> mutual authentication OK", flush=True)
+        conn.settimeout(None)
     except Exception:
         try:
             conn.close()
