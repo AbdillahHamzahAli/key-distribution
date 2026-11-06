@@ -10,5 +10,6 @@ pub mod error;
 pub mod net;
 pub mod protocol;
 pub mod rng;
+pub mod tui;
 
 pub use error::AppError;

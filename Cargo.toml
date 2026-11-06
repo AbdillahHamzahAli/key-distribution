@@ -2,6 +2,7 @@
 name = "key-distribution"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
 description = "Interactive KDC key distribution and two-way chat with manual AES-128"
 readme = "README.md"
 license = "MIT"
@@ -13,3 +14,4 @@ serde_json = "1"
 rand = "0.9"
 thiserror = "2"
 ctrlc = "3"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }

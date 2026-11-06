@@ -1,8 +1,10 @@
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
 use key_distribution::apps::{kdc_server, peer};
+use key_distribution::tui;
 
 #[derive(Parser)]
 #[command(
@@ -11,6 +13,12 @@ use key_distribution::apps::{kdc_server, peer};
     about = "Interactive KDC key distribution and encrypted chat with manual AES-128"
 )]
 struct Cli {
+    /// Use the line-based interface instead of the full-screen TUI.
+    #[arg(long, global = true, conflicts_with = "tui")]
+    plain: bool,
+    /// Force the full-screen TUI even when stdout is not a terminal.
+    #[arg(long, global = true)]
+    tui: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -37,17 +45,54 @@ enum Role {
 }
 
 fn main() -> ExitCode {
-    install_ctrl_c();
     let cli = Cli::parse();
-    let result = match cli.command {
-        Command::Kdc => kdc_server::run(),
-        Command::Peer { role } => peer::run_peer(role.map(|role| match role {
-            Role::Alice => peer::PeerRole::Alice,
-            Role::Bob => peer::PeerRole::Bob,
-        })),
-        Command::Alice => peer::run_peer(Some(peer::PeerRole::Alice)),
-        Command::Bob => peer::run_peer(Some(peer::PeerRole::Bob)),
+    let tui_enabled = if cli.plain {
+        false
+    } else if cli.tui {
+        true
+    } else {
+        std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
     };
+
+    if !tui_enabled {
+        install_ctrl_c();
+    }
+
+    let result = match cli.command {
+        Command::Kdc => {
+            if tui_enabled {
+                tui::run_kdc()
+            } else {
+                kdc_server::run()
+            }
+        }
+        Command::Peer { role } => {
+            let role = role.map(|role| match role {
+                Role::Alice => peer::PeerRole::Alice,
+                Role::Bob => peer::PeerRole::Bob,
+            });
+            if tui_enabled {
+                tui::run_peer(role)
+            } else {
+                peer::run_peer(role)
+            }
+        }
+        Command::Alice => {
+            if tui_enabled {
+                tui::run_peer(Some(peer::PeerRole::Alice))
+            } else {
+                peer::run_peer(Some(peer::PeerRole::Alice))
+            }
+        }
+        Command::Bob => {
+            if tui_enabled {
+                tui::run_peer(Some(peer::PeerRole::Bob))
+            } else {
+                peer::run_peer(Some(peer::PeerRole::Bob))
+            }
+        }
+    };
+
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
