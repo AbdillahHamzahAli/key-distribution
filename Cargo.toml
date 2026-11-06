@@ -1,0 +1,15 @@
+[package]
+name = "key-distribution"
+version = "0.1.0"
+edition = "2024"
+description = "Interactive KDC key distribution and two-way chat with manual AES-128"
+readme = "README.md"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.9"
+thiserror = "2"
+ctrlc = "3"

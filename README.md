@@ -5,8 +5,8 @@
 
 <h2> Key Distribution : KDC </h2>
 
-![Python](https://img.shields.io/badge/python-%233670A0.svg?style=for-the-badge&logo=python&logoColor=ffdd54)
-![uv](https://img.shields.io/badge/uv-%23DE5FE9.svg?style=for-the-badge&logo=uv&logoColor=white)
+![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)
+![Cargo](https://img.shields.io/badge/cargo-%23E57324.svg?style=for-the-badge&logo=rust&logoColor=white)
 
 <img src ="./assets/preview.png" width="95%">
 
@@ -14,13 +14,15 @@
 
 ## 🫥 Project Introduction
 
-An interactive key distribution and encrypted chat project built from scratch in
-Python. A **Key Distribution Center (KDC)** distributes a shared session key to
-**Alice** and **Bob**, who then use it for two-way AES-128-encrypted chat over TCP.
+An interactive key distribution and encrypted chat project written from scratch
+in **Rust**. A **Key Distribution Center (KDC)** distributes a shared session key
+to **Alice** and **Bob**, who then use it for two-way AES-128-encrypted chat over
+TCP.
 
-The project demonstrates key distribution, nonce-based authentication, and manual
-AES encryption across three computers with different IP addresses. It uses only
-the Python standard library, with no third-party cryptography libraries.
+The project demonstrates key distribution, nonce-based authentication, and a
+manual AES implementation across three computers with different IP addresses.
+AES-128, CBC, and PKCS#7 are implemented in this repository; no cryptography
+crate is used.
 
 ## 📝 Project Overview and Features
 
@@ -36,14 +38,24 @@ Alice and Bob can both send and receive chat messages after the handshake.
 
 ### Features
 
-- **Manual AES-128:** key expansion, encryption, and decryption implemented in Python.
+- **Manual AES-128:** compile-time S-box generation, key expansion, encryption,
+  and decryption implemented in Rust.
 - **CBC mode:** random initialization vectors (IVs) and PKCS#7 padding.
-- **Five-step key distribution:** a Needham–Schroeder-style protocol using tickets and nonces.
-- **Two-way communication:** a receiver thread processes incoming messages while the user types.
-- **Inter-device networking:** KDC, Alice, and Bob can run on separate machines over TCP/IP.
-- **Consistent formats:** keys and plaintext use ASCII; ciphertext uses uppercase hexadecimal.
-- **Interactive key updates:** change long-term keys and request a fresh session key without restarting.
-- **Protocol logging:** inspect handshake steps and outgoing chat ciphertext in the terminal.
+- **Five-step key distribution:** a Needham–Schroeder-style protocol using tickets
+  and nonces.
+- **Typed protocol:** newline-delimited JSON messages (`serde`) instead of ad-hoc
+  delimited text.
+- **Two-way communication:** a receiver thread processes incoming messages while
+  the user types.
+- **Inter-device networking:** KDC, Alice, and Bob can run on separate machines
+  over TCP/IP.
+- **Consistent formats:** keys and plaintext use ASCII; ciphertext uses uppercase
+  hexadecimal.
+- **Interactive key updates:** change long-term keys and request a fresh session
+  key without restarting.
+- **One binary, three roles:** `kdc`, `peer`, `alice`, and `bob` subcommands.
+- **Protocol logging:** inspect handshake steps and outgoing chat ciphertext in the
+  terminal.
 
 ### Distribution protocol
 
@@ -58,84 +70,110 @@ The exchange follows the project's [distribution schema](schema-distribution.jpg
 ```
 
 `Ka` and `Kb` are the long-term keys shared by each peer with the KDC. `Ks` is a
-fresh 16-character ASCII session key. `N1` and `N2` are nonces, and `E` denotes
-AES-CBC encryption. Alice verifies the nonce and identities in step 2; steps 4–5
-perform a challenge-response exchange using `Ks`.
+fresh 16-character ASCII session key. `N1` and `N2` are 8-digit nonces, and `E`
+denotes AES-128-CBC encryption with a random IV prepended to the ciphertext.
+Alice verifies the nonce and identities in step 2; steps 4–5 perform a
+challenge-response exchange using `Ks`.
 
-Messages are newline-framed ASCII strings over TCP, such as
-`STEP1|alice|bob|84671352` and `STEP2|<hexA>|<hexB>`. Encrypted payloads contain the
-IV followed by ciphertext, encoded together as hex.
+#### Wire format
+
+Every transport line is one JSON object (NDJSON) encoded as UTF-8, terminated by
+`\n`, with a 64 KiB line guard:
+
+```json
+{"type":"step1","initiator":"alice","responder":"bob","nonce":"84671352"}
+{"type":"step2","for_initiator":"<HEX>","ticket":"<HEX>"}
+{"type":"step3","ticket":"<HEX>"}
+{"type":"step4","ciphertext":"<HEX>"}
+{"type":"step5","ciphertext":"<HEX>"}
+{"type":"msg","ciphertext":"<HEX>"}
+{"type":"bye"}
+{"type":"error","message":"unknown identity: \"carol\""}
+```
+
+Encrypted payloads are uppercase hex strings containing the 16-byte IV followed
+by the ciphertext. The decrypted plaintext keeps the classic ASCII layout
+`Ks|IDA|IDB|N1` and `Ks|IDA`. Identities reject empty values, control
+characters, and `|` so the inner payload stays unambiguous. Lowercase hex is
+accepted on input and normalised to uppercase.
 
 ## ⛏️ Tech Stack, APIs, and Other Resources
 
 | Technology / resource | Purpose |
 |---|---|
-| Python >= 3.14 | Runtime required by [pyproject.toml](pyproject.toml). |
-| `uv` | Environment setup and module execution. |
-| `socket` | TCP connections between the KDC and peers. |
-| `threading` | Background connection handling and chat reception. |
-| `secrets` | Random session keys, nonces, and IVs. |
-| `unittest` | Automated tests, including FIPS-197 AES block vectors. |
+| Rust 1.85+ (edition 2024) | Runtime and language edition. |
+| Cargo | Build, test, and run the single binary. |
+| `std::net` | TCP connections between the KDC and peers. |
+| `std::thread` / `std::sync` | Background accept, receiver, and shared state. |
+| `clap` | Subcommand CLI (`kdc`, `peer`, `alice`, `bob`). |
+| `serde` / `serde_json` | Typed NDJSON messages. |
+| `rand` | OS-seeded randomness for session keys, nonces, and IVs. |
+| `thiserror` | Typed error enums per layer. |
+| `ctrlc` | Graceful interrupt message. |
 | [Distribution schema](schema-distribution.jpg) | Reference diagram for the key distribution exchange. |
 
-There are no external API services or third-party runtime dependencies. The
-network protocol uses Python's socket API directly.
+There are no external API services. No third-party crypto library is used: AES,
+CBC, and PKCS#7 live in `src/crypto/`.
 
 ### Project structure
 
 ```text
 key-distribution/
-├── pyproject.toml
+├── Cargo.toml
 ├── README.md
 ├── LICENSE
 ├── schema-distribution.jpg
 ├── src/
+│   ├── main.rs              # CLI: kdc | peer [--role alice|bob] | alice | bob
+│   ├── lib.rs
+│   ├── error.rs             # top-level AppError
+│   ├── rng.rs               # alphabet sampling for keys/nonces
 │   ├── crypto/
-│   │   ├── tables.py        # S-box, inverse S-box, Rcon
-│   │   ├── aes.py           # AES-128 key expansion and block operations
-│   │   ├── modes.py         # CBC, random IVs, PKCS#7 padding
-│   │   └── codec.py         # ASCII / bytes / hex conversion
+│   │   ├── tables.rs        # compile-time S-box, inverse S-box, Rcon
+│   │   ├── aes.rs           # AES-128 key expansion and block operations
+│   │   ├── modes.rs         # CBC, random IVs, PKCS#7 padding
+│   │   └── codec.rs         # ASCII / bytes / uppercase hex, Key and Hex types
 │   ├── protocol/
-│   │   ├── messages.py      # Message serialization and parsing
-│   │   ├── kdc_logic.py     # Session key generation and KDC response
-│   │   └── handshake.py     # Nonces, tickets, challenge-response
+│   │   ├── messages.rs      # typed NDJSON message enum and validation
+│   │   ├── kdc_logic.rs     # session key generation and KDC response
+│   │   └── handshake.rs     # nonces, tickets, challenge-response
 │   ├── net/
-│   │   └── framing.py       # Newline-based TCP framing
+│   │   └── framing.rs       # buffered NDJSON line framing over TCP
 │   └── apps/
-│       ├── common.py        # Interactive input validation
-│       ├── kdc_server.py    # KDC entry point
-│       ├── peer.py          # Alice / Bob entry point
-│       └── chat.py          # Interactive two-way chat
-└── tests/                  # Crypto, protocol, and networking tests
+│       ├── common.rs        # interactive input validation
+│       ├── kdc_server.rs    # KDC entry point and menu
+│       ├── peer.rs          # Alice / Bob entry points
+│       └── chat.rs          # interactive two-way chat
+└── tests/                   # crypto, protocol, framing, and end-to-end tests
 ```
 
 ## 🧑‍💻 Getting Started: Setup and Running Instructions
 
 ### Prerequisites and setup
 
-Install Python **3.14 or newer**, `uv`, and Git. On each machine, clone the project
-and prepare the environment:
+Install a Rust toolchain **1.85 or newer** (for edition 2024) and Git. On each
+machine, clone the project and build it:
 
 ```bash
 git clone https://github.com/AbdillahHamzahAli/key-distribution.git
 cd key-distribution
-uv sync
+cargo build --release
 ```
 
-Run all commands below from the project root. The project sets
-`[tool.uv] package = false` and runs directly as `src.apps.*` modules.
+Run all commands below from the project root. For three-machine testing, use the
+actual **KDC IP** and **Bob IP** when Alice connects. Allow TCP traffic to the
+KDC's port **9001** and Bob's port **9002**. Both listeners bind to `0.0.0.0`.
+For local testing, open three terminals and use `127.0.0.1` for both hosts.
 
-For three-machine testing, use the actual **KDC IP** and **Bob IP** when Alice
-connects. Allow TCP traffic to the KDC's port **9001** and Bob's port **9002**.
-Both listeners bind to `0.0.0.0`. For local testing, open three terminals and use
-`127.0.0.1` for both hosts.
+You can either use `cargo run --release -- <command>` or the built binary at
+`target/release/key-distribution`.
 
 ### 1. Start the KDC
 
 On the KDC machine:
 
 ```bash
-uv run python3 -m src.apps.kdc_server
+cargo run --release -- kdc
 ```
 
 Enter these example values when prompted. Both long-term keys must contain
@@ -146,7 +184,7 @@ Alice ID: alice
 Ka (key for alice): AliceKey12345678
 Bob ID: bob
 Kb (key for bob): BobKey1111111111
-Listen port: 9001
+Listen port (default 9001): 9001
 ```
 
 ### 2. Start Bob as the responder
@@ -154,13 +192,13 @@ Listen port: 9001
 On Bob's machine, start the peer before Alice connects:
 
 ```bash
-uv run python3 -m src.apps.peer
+cargo run --release -- peer --role bob
+# or: cargo run --release -- bob
 ```
 
 ```text
-mode: 2
 Kb (your long-term key): BobKey1111111111
-Listen port: 9002
+Listen port (default 9002): 9002
 ```
 
 Bob waits for Alice's ticket. His `Kb` must match the key registered for `bob` at
@@ -171,22 +209,25 @@ the KDC.
 On Alice's machine:
 
 ```bash
-uv run python3 -m src.apps.peer
+cargo run --release -- peer --role alice
+# or: cargo run --release -- alice
 ```
 
 ```text
-mode: 1
 Ka (your long-term key): AliceKey12345678
 Your ID: alice
 Responder ID: bob
-KDC host: <KDC-IP>
-KDC port: 9001
-Bob host: <BOB-IP>
-Bob port: 9002
+KDC host (default 127.0.0.1): <KDC-IP>
+KDC port (default 9001): 9001
+Bob host (default 127.0.0.1): <BOB-IP>
+Bob port (default 9002): 9002
 ```
 
 Replace `<KDC-IP>` and `<BOB-IP>` with the corresponding machines' IP addresses.
 Alice's `Ka` and both IDs must match the KDC registration.
+
+`cargo run --release -- peer` without `--role` prompts for mode `1` (Alice) or
+`2` (Bob), matching the older workflow.
 
 Alice runs the five-step handshake automatically. After it completes, both peers
 can type ASCII messages. The sender sees outgoing ciphertext in hex; the receiver
@@ -229,11 +270,25 @@ hidden.
 ### Run tests
 
 ```bash
-uv run python3 -m unittest discover -s tests -v
+cargo test
 ```
 
-The suite covers AES block vectors and key expansion, CBC and padding, ASCII/hex
-conversion, protocol messages, ticket and nonce verification, and socket framing.
+The suite covers:
+
+- AES block vectors (FIPS-197 Appendix B and C.1), key expansion, and transforms.
+- CBC, random IVs, PKCS#7 padding, and text wrappers.
+- ASCII/hex conversion and the `Key` / `Hex` newtypes.
+- NDJSON message serialization and validation.
+- Ticket parsing, nonce checks, and challenge-response verification.
+- Framed TCP reads, fragmented arrivals, clean closes, and oversized lines.
+- An end-to-end KDC → Alice → Bob handshake followed by two-way encrypted chat.
+
+Optional quality gates:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+```
 
 ## 🔥 Conclusion and License
 
