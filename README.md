@@ -43,10 +43,13 @@ Alice and Bob can both send and receive chat messages after the handshake.
 - **CBC mode:** random initialization vectors (IVs) and PKCS#7 padding.
 - **Five-step key distribution:** a Needham–Schroeder-style protocol using tickets
   and nonces.
+- **Full-screen TUI:** a `ratatui` + `crossterm` interface with setup forms, a
+  live protocol log, a chat pane, scrollback, and a key-rotation modal. The
+  line-based interface remains available with `--plain`.
 - **Typed protocol:** newline-delimited JSON messages (`serde`) instead of ad-hoc
   delimited text.
-- **Two-way communication:** a receiver thread processes incoming messages while
-  the user types.
+- **Two-way communication:** a background reader thread processes incoming
+  messages while the user types in either interface.
 - **Inter-device networking:** KDC, Alice, and Bob can run on separate machines
   over TCP/IP.
 - **Consistent formats:** keys and plaintext use ASCII; ciphertext uses uppercase
@@ -55,7 +58,7 @@ Alice and Bob can both send and receive chat messages after the handshake.
   key without restarting.
 - **One binary, three roles:** `kdc`, `peer`, `alice`, and `bob` subcommands.
 - **Protocol logging:** inspect handshake steps and outgoing chat ciphertext in the
-  terminal.
+  TUI log or plain terminal.
 
 ### Distribution protocol
 
@@ -101,7 +104,7 @@ accepted on input and normalised to uppercase.
 
 | Technology / resource | Purpose |
 |---|---|
-| Rust 1.85+ (edition 2024) | Runtime and language edition. |
+| Rust 1.88+ (edition 2024) | Runtime and language edition. |
 | Cargo | Build, test, and run the single binary. |
 | `std::net` | TCP connections between the KDC and peers. |
 | `std::thread` / `std::sync` | Background accept, receiver, and shared state. |
@@ -109,7 +112,8 @@ accepted on input and normalised to uppercase.
 | `serde` / `serde_json` | Typed NDJSON messages. |
 | `rand` | OS-seeded randomness for session keys, nonces, and IVs. |
 | `thiserror` | Typed error enums per layer. |
-| `ctrlc` | Graceful interrupt message. |
+| `ctrlc` | Graceful interrupt message in plain mode. |
+| `ratatui` + `crossterm` | Full-screen terminal UI, layout, input, and rendering. |
 | [Distribution schema](schema-distribution.jpg) | Reference diagram for the key distribution exchange. |
 
 There are no external API services. No third-party crypto library is used: AES,
@@ -139,11 +143,20 @@ key-distribution/
 │   │   └── handshake.rs     # nonces, tickets, challenge-response
 │   ├── net/
 │   │   └── framing.rs       # buffered NDJSON line framing over TCP
+│   ├── tui/
+│   │   ├── mod.rs           # TUI entry points
+│   │   ├── runtime.rs       # terminal lifecycle + event loop
+│   │   ├── widgets.rs       # ASCII text field, wrapping, layout helpers
+│   │   ├── log.rs           # scrollable protocol/chat log
+│   │   ├── setup.rs         # setup forms with validation
+│   │   ├── chat.rs          # chat pane, history, key-rotation modal
+│   │   ├── kdc.rs           # KDC dashboard
+│   │   └── peer.rs          # Alice/Bob screens and role selection
 │   └── apps/
-│       ├── common.rs        # interactive input validation
+│       ├── common.rs        # plain-mode input validation
 │       ├── kdc_server.rs    # KDC entry point and menu
-│       ├── peer.rs          # Alice / Bob entry points
-│       └── chat.rs          # interactive two-way chat
+│       ├── peer.rs          # Alice / Bob entry points and handshakes
+│       └── chat.rs          # plain-mode two-way chat
 └── tests/                   # crypto, protocol, framing, and end-to-end tests
 ```
 
@@ -151,8 +164,8 @@ key-distribution/
 
 ### Prerequisites and setup
 
-Install a Rust toolchain **1.85 or newer** (for edition 2024) and Git. On each
-machine, clone the project and build it:
+Install a Rust toolchain **1.88 or newer** (for edition 2024 and the APIs used
+by the crypto test suite) and Git. On each machine, clone the project and build it:
 
 ```bash
 git clone https://github.com/AbdillahHamzahAli/key-distribution.git
@@ -168,6 +181,21 @@ For local testing, open three terminals and use `127.0.0.1` for both hosts.
 You can either use `cargo run --release -- <command>` or the built binary at
 `target/release/key-distribution`.
 
+### Interface selection
+
+The binary automatically opens the full-screen TUI when both stdin and stdout are
+terminals. Use the line-based workflow explicitly with `--plain`, or force the TUI
+with `--tui`:
+
+```bash
+cargo run --release -- kdc            # TUI on a normal terminal
+cargo run --release -- --plain kdc    # line-based prompts and menu
+```
+
+In the TUI, every setup form is prefilled with the local defaults below. Use
+`Tab` / `↑` `↓` to move, edit values normally, and press `Enter` to start.
+`Esc` quits. `peer` without `--role` shows a role-selection screen.
+
 ### 1. Start the KDC
 
 On the KDC machine:
@@ -176,8 +204,8 @@ On the KDC machine:
 cargo run --release -- kdc
 ```
 
-Enter these example values when prompted. Both long-term keys must contain
-exactly **16 ASCII characters**:
+Accept these defaults in the TUI form (or enter the same values in `--plain`
+mode). Both long-term keys must contain exactly **16 ASCII characters**:
 
 ```text
 Alice ID: alice
@@ -194,6 +222,7 @@ On Bob's machine, start the peer before Alice connects:
 ```bash
 cargo run --release -- peer --role bob
 # or: cargo run --release -- bob
+# add --plain for the line-based prompts
 ```
 
 ```text
@@ -211,6 +240,7 @@ On Alice's machine:
 ```bash
 cargo run --release -- peer --role alice
 # or: cargo run --release -- alice
+# add --plain for the line-based prompts
 ```
 
 ```text
@@ -226,8 +256,8 @@ Bob port (default 9002): 9002
 Replace `<KDC-IP>` and `<BOB-IP>` with the corresponding machines' IP addresses.
 Alice's `Ka` and both IDs must match the KDC registration.
 
-`cargo run --release -- peer` without `--role` prompts for mode `1` (Alice) or
-`2` (Bob), matching the older workflow.
+`cargo run --release -- peer` without `--role` asks for Alice or Bob, matching the
+older workflow; in the TUI this is a full-screen selection screen.
 
 Alice runs the five-step handshake automatically. After it completes, both peers
 can type ASCII messages. The sender sees outgoing ciphertext in hex; the receiver
@@ -239,26 +269,30 @@ sees decrypted text, such as `[alice] Hello Bob`.
 |---|---|
 | Any ASCII text | Encrypt and send a chat message using `Ks`. |
 | `/key` | Change the local long-term key (`Ka` or `Kb`) for the next handshake. |
-| `/rehandshake` | End the current chat connection and begin another handshake; Alice initiates the exchange and Bob waits for it. |
+| `/rehandshake` | End the current chat connection and begin another handshake; Alice initiates the exchange and Bob's listener accepts it. |
 | `/help` or `/menu` | Show chat commands. |
 | `/quit` | Send `BYE` and exit the local peer. |
 
-When a peer disconnects, press Enter if prompted so the local input loop can
-continue. Alice can choose `r` to reconnect; Bob returns to listening.
+In the TUI, use `PgUp` / `PgDn` to scroll the conversation, `↑` / `↓` to recall
+message history, and `Esc` to cancel the `/key` modal. `Ctrl+C` quits. Bob keeps
+his listener ready after a chat ends, so if Alice rehandshakes while Bob is still
+on the old chat screen, Bob automatically accepts the new connection and replaces
+the chat pane. In `--plain` mode, press Enter when prompted after a disconnect;
+Alice can choose `r` to reconnect and Bob returns to listening.
 
 ### Change keys without restarting
 
 1. On the peer whose key will change, enter `/key` and provide a new 16-character
-   ASCII key. Empty input cancels the change.
+   ASCII key. The TUI opens a masked modal; `--plain` prompts on the terminal.
 2. On the KDC console, update the same identity before the next handshake:
 
    ```text
    /key alice NewAliceKey12345
    ```
 
-3. On Alice's console, run `/rehandshake` to obtain a fresh `Ks`. On Bob's console,
-   press Enter when the disconnection prompt appears so Bob can accept the new
-   connection.
+3. On Alice's console, run `/rehandshake` to obtain a fresh `Ks`. Bob is either
+   waiting or automatically accepts the new handshake. If Bob initiated the
+   change, run `/rehandshake` on Bob first, then on Alice.
 
 Changing `Ka` or `Kb` affects the next handshake; the current chat continues to
 use its existing `Ks`. The peer and KDC must use matching long-term keys.
@@ -281,6 +315,8 @@ The suite covers:
 - NDJSON message serialization and validation.
 - Ticket parsing, nonce checks, and challenge-response verification.
 - Framed TCP reads, fragmented arrivals, clean closes, and oversized lines.
+- TUI text-field editing, wrapping, setup validation, command parsing, and
+  `TestBackend` rendering.
 - An end-to-end KDC → Alice → Bob handshake followed by two-way encrypted chat.
 
 Optional quality gates:
