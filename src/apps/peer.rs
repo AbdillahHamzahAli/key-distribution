@@ -29,6 +29,7 @@ pub struct HandshakeResult {
     pub peer: Id,
 }
 
+#[derive(Clone)]
 pub struct AliceParams {
     pub key_alice: Key,
     pub initiator: Id,
@@ -39,8 +40,16 @@ pub struct AliceParams {
     pub bob_port: u16,
 }
 
-/// Run the five-step exchange from Alice's side.
+/// Run the five-step exchange from Alice's side, printing progress to stdout.
 pub fn alice_handshake(params: &AliceParams) -> Result<HandshakeResult, AppError> {
+    alice_handshake_with(params, &mut |line| println!("{line}"))
+}
+
+/// Run the five-step exchange from Alice's side, reporting progress through `log`.
+pub fn alice_handshake_with(
+    params: &AliceParams,
+    log: &mut dyn FnMut(String),
+) -> Result<HandshakeResult, AppError> {
     let nonce = new_nonce();
 
     let kdc_stream =
@@ -64,12 +73,12 @@ pub fn alice_handshake(params: &AliceParams) -> Result<HandshakeResult, AppError
             nonce: nonce.clone(),
         },
     )?;
-    println!(
+    log(format!(
         "[A] STEP1 sent to KDC: ida={:?} idb={:?} n1={:?}",
         params.initiator.as_str(),
         params.responder.as_str(),
         nonce.as_str()
-    );
+    ));
 
     let reply = kdc
         .recv_message()?
@@ -88,8 +97,11 @@ pub fn alice_handshake(params: &AliceParams) -> Result<HandshakeResult, AppError
         }
     };
 
-    println!("[A] STEP2 received: hex_for_a={}", for_initiator.as_str());
-    println!("[A] ticket for Bob: {}", ticket.as_str());
+    log(format!(
+        "[A] STEP2 received: hex_for_a={}",
+        for_initiator.as_str()
+    ));
+    log(format!("[A] ticket for Bob: {}", ticket.as_str()));
 
     let session_key = parse_step2(
         &params.key_alice,
@@ -98,7 +110,7 @@ pub fn alice_handshake(params: &AliceParams) -> Result<HandshakeResult, AppError
         Some(&params.initiator),
         Some(&params.responder),
     )?;
-    println!("[A] Ks acquired (kept secret)");
+    log("[A] Ks acquired (kept secret)".to_string());
     drop(kdc);
 
     let bob_stream =
@@ -120,7 +132,7 @@ pub fn alice_handshake(params: &AliceParams) -> Result<HandshakeResult, AppError
             ticket: ticket.clone(),
         },
     )?;
-    println!("[A] STEP3 sent to Bob: ticket={}", ticket.as_str());
+    log(format!("[A] STEP3 sent to Bob: ticket={}", ticket.as_str()));
 
     let reply = bob
         .recv_message()?
@@ -136,7 +148,10 @@ pub fn alice_handshake(params: &AliceParams) -> Result<HandshakeResult, AppError
         }
     };
 
-    println!("[A] STEP4 received from Bob: hex={}", step4.as_str());
+    log(format!(
+        "[A] STEP4 received from Bob: hex={}",
+        step4.as_str()
+    ));
     let step5 = make_step5(&session_key, &step4)?;
     send_message(
         bob.stream(),
@@ -144,11 +159,11 @@ pub fn alice_handshake(params: &AliceParams) -> Result<HandshakeResult, AppError
             ciphertext: step5.clone(),
         },
     )?;
-    println!("[A] STEP5 sent to Bob: hex={}", step5.as_str());
+    log(format!("[A] STEP5 sent to Bob: hex={}", step5.as_str()));
 
     bob.stream().set_read_timeout(None)?;
     bob.stream().set_write_timeout(None)?;
-    println!("[A] handshake complete");
+    log("[A] handshake complete".to_string());
 
     Ok(HandshakeResult {
         conn: bob,
@@ -159,6 +174,15 @@ pub fn alice_handshake(params: &AliceParams) -> Result<HandshakeResult, AppError
 
 /// Complete the exchange on Bob's side for an accepted connection.
 pub fn bob_handshake(stream: TcpStream, key_bob: &Key) -> Result<HandshakeResult, AppError> {
+    bob_handshake_with(stream, key_bob, &mut |line| println!("{line}"))
+}
+
+/// Complete the exchange on Bob's side, reporting progress through `log`.
+pub fn bob_handshake_with(
+    stream: TcpStream,
+    key_bob: &Key,
+    log: &mut dyn FnMut(String),
+) -> Result<HandshakeResult, AppError> {
     stream.set_read_timeout(Some(STEP_TIMEOUT))?;
     stream.set_write_timeout(Some(STEP_TIMEOUT))?;
 
@@ -166,7 +190,7 @@ pub fn bob_handshake(stream: TcpStream, key_bob: &Key) -> Result<HandshakeResult
         .peer_addr()
         .map(|address| address.to_string())
         .unwrap_or_else(|_| "?".to_string());
-    println!("[B] connection from {peer_address}");
+    log(format!("[B] connection from {peer_address}"));
 
     let mut conn = LineReader::new(stream);
     let message = conn
@@ -183,12 +207,12 @@ pub fn bob_handshake(stream: TcpStream, key_bob: &Key) -> Result<HandshakeResult
         }
     };
 
-    println!("[B] STEP3 received: ticket={}", ticket.as_str());
+    log(format!("[B] STEP3 received: ticket={}", ticket.as_str()));
     let (session_key, initiator) = parse_ticket(key_bob, &ticket)?;
-    println!(
+    log(format!(
         "[B] ticket decrypted: ida={:?}, Ks acquired",
         initiator.as_str()
-    );
+    ));
 
     let (nonce, step4) = make_step4(&session_key);
     send_message(
@@ -197,11 +221,11 @@ pub fn bob_handshake(stream: TcpStream, key_bob: &Key) -> Result<HandshakeResult
             ciphertext: step4.clone(),
         },
     )?;
-    println!(
+    log(format!(
         "[B] STEP4 sent: n2={} hex={}",
         nonce.as_str(),
         step4.as_str()
-    );
+    ));
 
     let message = conn
         .recv_message()?
@@ -217,14 +241,14 @@ pub fn bob_handshake(stream: TcpStream, key_bob: &Key) -> Result<HandshakeResult
         }
     };
 
-    println!("[B] STEP5 received: hex={}", step5.as_str());
+    log(format!("[B] STEP5 received: hex={}", step5.as_str()));
     if !verify_step5(&session_key, &nonce, &step5)? {
         return Err(MessageError::VerificationFailed.into());
     }
-    println!(
+    log(format!(
         "[B] STEP5 verified with {:?} -> mutual authentication OK",
         initiator.as_str()
-    );
+    ));
 
     conn.stream().set_read_timeout(None)?;
     conn.stream().set_write_timeout(None)?;

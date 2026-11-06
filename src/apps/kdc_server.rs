@@ -99,33 +99,50 @@ pub fn serve_listener(
     registry: Arc<Mutex<BTreeMap<String, Key>>>,
     shutdown: Arc<AtomicBool>,
 ) -> io::Result<()> {
+    serve_listener_with_logger(listener, registry, shutdown, |line| println!("{line}"))
+}
+
+/// Accept loop that reports activity through `log` instead of stdout.
+pub fn serve_listener_with_logger<F>(
+    listener: TcpListener,
+    registry: Arc<Mutex<BTreeMap<String, Key>>>,
+    shutdown: Arc<AtomicBool>,
+    mut log: F,
+) -> io::Result<()>
+where
+    F: FnMut(String),
+{
     listener.set_nonblocking(true)?;
 
     while !shutdown.load(Ordering::SeqCst) {
         match listener.accept() {
-            Ok((stream, address)) => match handle_connection(stream, &registry) {
-                Ok(()) => println!("[KDC] done, connection closed"),
-                Err(error) => println!("[KDC] rejected {address}: {error}"),
+            Ok((stream, address)) => match handle_connection(stream, &registry, &mut log) {
+                Ok(()) => log("[KDC] done, connection closed".to_string()),
+                Err(error) => log(format!("[KDC] rejected {address}: {error}")),
             },
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(ACCEPT_POLL);
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => {
-                println!("[KDC] accept error: {error}");
+                log(format!("[KDC] accept error: {error}"));
                 return Err(error);
             }
         }
     }
 
-    println!("[KDC] listener closed");
+    log("[KDC] listener closed".to_string());
     Ok(())
 }
 
-fn handle_connection(
+fn handle_connection<F>(
     stream: std::net::TcpStream,
     registry: &Arc<Mutex<BTreeMap<String, Key>>>,
-) -> Result<(), AppError> {
+    log: &mut F,
+) -> Result<(), AppError>
+where
+    F: FnMut(String),
+{
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(CONN_TIMEOUT))?;
     stream.set_write_timeout(Some(CONN_TIMEOUT))?;
@@ -155,12 +172,12 @@ fn handle_connection(
         }
     };
 
-    println!(
+    log(format!(
         "[KDC] STEP1 from {peer}: ida={:?} idb={:?} n1={:?}",
         initiator.as_str(),
         responder.as_str(),
         nonce.as_str()
-    );
+    ));
 
     let (for_initiator, ticket) = {
         let keys = registry
@@ -177,11 +194,11 @@ fn handle_connection(
         },
     )?;
 
-    println!(
+    log(format!(
         "[KDC] STEP2: generated fresh Ks (hidden); hex_for_a={}",
         for_initiator.as_str()
-    );
-    println!("[KDC] STEP2: hex_for_b={}", ticket.as_str());
+    ));
+    log(format!("[KDC] STEP2: hex_for_b={}", ticket.as_str()));
     Ok(())
 }
 
